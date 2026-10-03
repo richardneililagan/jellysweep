@@ -31,7 +31,12 @@ func newTestSonarr(t *testing.T, cfgOpts ...func(*config.Config)) (*Sonarr, *htt
 	}
 	engineCache, err := cache.NewEngineCache(&config.CacheConfig{Type: config.CacheTypeMemory})
 	require.NoError(t, err)
-	return NewSonarr(cfg, nil, engineCache.SonarrTagsCache), server
+	settings := Settings{
+		DryRun:      cfg.DryRun,
+		CleanupMode: cfg.GetCleanupMode(),
+		KeepCount:   cfg.GetKeepCount(),
+	}
+	return NewSonarr(config.DefaultArrInstanceName, cfg.Sonarr, settings, engineCache.SonarrTagsCache), server
 }
 
 func series(id int32, title string, year, tvdb, tmdb int32, tags ...int32) sonarrAPI.SeriesResource {

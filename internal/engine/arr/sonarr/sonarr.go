@@ -15,7 +15,6 @@ import (
 	"github.com/jon4hz/jellysweep/internal/cache"
 	"github.com/jon4hz/jellysweep/internal/config"
 	"github.com/jon4hz/jellysweep/internal/engine/arr"
-	"github.com/jon4hz/jellysweep/internal/engine/stats"
 	"github.com/jon4hz/jellysweep/internal/tags"
 	"github.com/jon4hz/jellysweep/internal/version"
 	"github.com/samber/lo"
@@ -24,10 +23,18 @@ import (
 
 var _ arr.Arrer = (*Sonarr)(nil)
 
+// Settings holds the global Jellysweep settings that apply to every Sonarr instance.
+type Settings struct {
+	DryRun      bool
+	CleanupMode config.CleanupMode
+	KeepCount   int
+}
+
 type Sonarr struct {
 	client    *sonarrAPI.APIClient
-	stats     stats.Statser
-	cfg       *config.Config
+	name      string
+	apiKey    string
+	settings  Settings
 	tagsCache *cache.PrefixedCache[cache.TagMap]
 }
 
@@ -39,26 +46,34 @@ func (s *Sonarr) sonarrAuthCtx(ctx context.Context) context.Context {
 		ctx,
 		sonarrAPI.ContextAPIKeys,
 		map[string]sonarrAPI.APIKey{
-			"X-Api-Key": {Key: s.cfg.Sonarr.APIKey},
+			"X-Api-Key": {Key: s.apiKey},
 		},
 	)
 }
 
-func NewSonarr(cfg *config.Config, stats stats.Statser, tagsCache *cache.PrefixedCache[cache.TagMap]) *Sonarr {
+// logger returns the default logger tagged with the instance name. It is built
+// per call so later changes to the default logger's level or output apply.
+func (s *Sonarr) logger() *log.Logger {
+	return log.With("instance", s.name)
+}
+
+// NewSonarr creates a client for the Sonarr instance identified by name.
+func NewSonarr(name string, instance *config.SonarrConfig, settings Settings, tagsCache *cache.PrefixedCache[cache.TagMap]) *Sonarr {
 	scfg := sonarrAPI.NewConfiguration()
 	scfg.Servers = sonarrAPI.ServerConfigurations{
 		{
-			URL: cfg.Sonarr.URL,
+			URL: instance.URL,
 		},
 	}
-	scfg.HTTPClient = &http.Client{Timeout: config.TimeoutDuration(cfg.Sonarr.Timeout)}
+	scfg.HTTPClient = &http.Client{Timeout: config.TimeoutDuration(instance.Timeout)}
 	scfg.UserAgent = fmt.Sprintf("Jellysweep/%s", version.Version)
 	client := sonarrAPI.NewAPIClient(scfg)
 
 	return &Sonarr{
 		client:    client,
-		cfg:       cfg,
-		stats:     stats,
+		name:      name,
+		apiKey:    instance.APIKey,
+		settings:  settings,
 		tagsCache: tagsCache,
 	}
 }
@@ -97,7 +112,7 @@ func (s *Sonarr) GetItems(ctx context.Context, jellyfinItems []arr.JellyfinItem)
 	for _, jf := range jellyfinItems {
 		libraryName := jf.ParentLibraryName
 		if libraryName == "" {
-			log.Error("Library name is empty for Jellyfin item, skipping", "item_id", jf.GetId(), "item_name", jf.GetName())
+			s.logger().Error("Library name is empty for Jellyfin item, skipping", "item_id", jf.GetId(), "item_name", jf.GetName())
 			continue
 		}
 		if jf.GetType() != jellyfin.BASEITEMKIND_SERIES {
@@ -113,12 +128,12 @@ func (s *Sonarr) GetItems(ctx context.Context, jellyfinItems []arr.JellyfinItem)
 			if tvdbIdStr, ok := providerIds["Tvdb"]; ok && tvdbIdStr != "" {
 				tvdbId, err := strconv.ParseInt(tvdbIdStr, 10, 32)
 				if err != nil {
-					log.Warn("Failed to parse TVDB ID from Jellyfin provider IDs", "tvdbId", tvdbIdStr, "error", err)
+					s.logger().Warn("Failed to parse TVDB ID from Jellyfin provider IDs", "tvdbId", tvdbIdStr, "error", err)
 				} else {
 					if series, found := byTvdbId[int32(tvdbId)]; found {
 						sr = series
 						matched = true
-						log.Debug("Matched Sonarr series by TVDB ID", "title", jf.GetName(), "tvdbId", tvdbId)
+						s.logger().Debug("Matched Sonarr series by TVDB ID", "title", jf.GetName(), "tvdbId", tvdbId)
 					}
 				}
 			}
@@ -128,12 +143,12 @@ func (s *Sonarr) GetItems(ctx context.Context, jellyfinItems []arr.JellyfinItem)
 				if tmdbIdStr, ok := providerIds["Tmdb"]; ok && tmdbIdStr != "" {
 					tmdbId, err := strconv.ParseInt(tmdbIdStr, 10, 32)
 					if err != nil {
-						log.Warn("Failed to parse TMDB ID from Jellyfin provider IDs", "tmdbId", tmdbIdStr, "error", err)
+						s.logger().Warn("Failed to parse TMDB ID from Jellyfin provider IDs", "tmdbId", tmdbIdStr, "error", err)
 					} else {
 						if series, found := byTmdbId[int32(tmdbId)]; found {
 							sr = series
 							matched = true
-							log.Debug("Matched Sonarr series by TMDB ID", "title", jf.GetName(), "tmdbId", tmdbId)
+							s.logger().Debug("Matched Sonarr series by TMDB ID", "title", jf.GetName(), "tmdbId", tmdbId)
 						}
 					}
 				}
@@ -146,12 +161,12 @@ func (s *Sonarr) GetItems(ctx context.Context, jellyfinItems []arr.JellyfinItem)
 			if series, ok := byTitleYear[key]; ok {
 				sr = series
 				matched = true
-				log.Debug("Matched Sonarr series by title+year", "title", jf.GetName(), "year", jf.GetProductionYear())
+				s.logger().Debug("Matched Sonarr series by title+year", "title", jf.GetName(), "year", jf.GetProductionYear())
 			}
 		}
 
 		if !matched {
-			log.Warn("No matching Sonarr series found for Jellyfin item, skipping", "title", jf.GetName(), "year", jf.GetProductionYear())
+			s.logger().Warn("No matching Sonarr series found for Jellyfin item, skipping", "title", jf.GetName(), "year", jf.GetProductionYear())
 			continue
 		}
 
@@ -168,7 +183,7 @@ func (s *Sonarr) GetItems(ctx context.Context, jellyfinItems []arr.JellyfinItem)
 		})
 	}
 
-	log.Info("Merged jellyfin items with sonarr series", "mediaCount", len(mediaItems), "jellyfinCount", len(jellyfinItems))
+	s.logger().Info("Merged jellyfin items with sonarr series", "mediaCount", len(mediaItems), "jellyfinCount", len(jellyfinItems))
 	return mediaItems, nil
 }
 
@@ -186,7 +201,7 @@ func (s *Sonarr) getTags(ctx context.Context, forceRefresh bool) (cache.TagMap, 
 		cachedTags, err := s.tagsCache.Get(ctx, "all")
 		switch {
 		case err != nil:
-			log.Debug("Failed to get Sonarr tags from cache, fetching from API", "error", err)
+			s.logger().Debug("Failed to get Sonarr tags from cache, fetching from API", "error", err)
 		case len(cachedTags) != 0:
 			return cachedTags, nil
 		}
@@ -197,7 +212,7 @@ func (s *Sonarr) getTags(ctx context.Context, forceRefresh bool) (cache.TagMap, 
 		// A refresh was requested because the cached tags may be outdated; drop
 		// them so later cached reads do not keep serving stale labels.
 		if cerr := s.tagsCache.Clear(ctx); cerr != nil {
-			log.Debug("Failed to clear Sonarr tags cache", "error", cerr)
+			s.logger().Debug("Failed to clear Sonarr tags cache", "error", cerr)
 		}
 		return nil, err
 	}
@@ -208,7 +223,7 @@ func (s *Sonarr) getTags(ctx context.Context, forceRefresh bool) (cache.TagMap, 
 		tagMap[tag.GetId()] = tag.GetLabel()
 	}
 	if err := s.tagsCache.Set(ctx, "all", tagMap); err != nil {
-		log.Warn("failed to cache Sonarr tags", "error", err)
+		s.logger().Warn("failed to cache Sonarr tags", "error", err)
 	}
 
 	return tagMap, nil
@@ -250,11 +265,11 @@ func (s *Sonarr) ensureTagExists(ctx context.Context, deleteTagLabel string) err
 	}
 	defer resp.Body.Close() //nolint: errcheck
 
-	log.Info("created Sonarr tag", "label", deleteTagLabel)
+	s.logger().Info("created Sonarr tag", "label", deleteTagLabel)
 
 	tagMap[newTag.GetId()] = newTag.GetLabel()
 	if err := s.tagsCache.Set(ctx, "all", tagMap); err != nil {
-		log.Warn("failed to cache new Sonarr tag", "label", deleteTagLabel, "error", err)
+		s.logger().Warn("failed to cache new Sonarr tag", "label", deleteTagLabel, "error", err)
 	}
 	return nil
 }
@@ -267,8 +282,8 @@ func (s *Sonarr) UnmonitorMedia(ctx context.Context, seriesID int32, title strin
 		return fmt.Errorf("failed to get episodes for series %s: %w", title, err)
 	}
 
-	if s.cfg.DryRun {
-		log.Info("dry run: would unmonitor episodes for series", "title", title, "count", len(episodes))
+	if s.settings.DryRun {
+		s.logger().Info("dry run: would unmonitor episodes for series", "title", title, "count", len(episodes))
 		return nil
 	}
 
@@ -296,7 +311,7 @@ func (s *Sonarr) UnmonitorMedia(ctx context.Context, seriesID int32, title strin
 	}
 	defer resp.Body.Close() //nolint: errcheck
 
-	log.Info("unmonitored episodes to prevent redownload", "title", title, "count", len(episodesToUnmonitor))
+	s.logger().Info("unmonitored episodes to prevent redownload", "title", title, "count", len(episodesToUnmonitor))
 	return nil
 }
 
@@ -322,7 +337,7 @@ func (s *Sonarr) ResetTags(ctx context.Context, additionalTags []string) error {
 			tagName := tagMap[tagID]
 			if tags.IsJellysweepOrAdditionalTag(tagName, additionalTags) {
 				hasJellysweepTags = true
-				log.Debug("removing jellysweep tag from Sonarr series", "tag", tagName, "title", serie.GetTitle())
+				s.logger().Debug("removing jellysweep tag from Sonarr series", "tag", tagName, "title", serie.GetTitle())
 			} else {
 				newTags = append(newTags, tagID)
 			}
@@ -335,16 +350,16 @@ func (s *Sonarr) ResetTags(ctx context.Context, additionalTags []string) error {
 				SeriesResource(serie).
 				Execute()
 			if err != nil {
-				log.Error("failed to update Sonarr series", "title", serie.GetTitle(), "error", err)
+				s.logger().Error("failed to update Sonarr series", "title", serie.GetTitle(), "error", err)
 				continue
 			}
 			defer seriesResp.Body.Close() //nolint: errcheck
-			log.Info("removed jellysweep tags from Sonarr series", "title", serie.GetTitle())
+			s.logger().Info("removed jellysweep tags from Sonarr series", "title", serie.GetTitle())
 			seriesUpdated++
 		}
 	}
 
-	log.Info("updated Sonarr series", "count", seriesUpdated)
+	s.logger().Info("updated Sonarr series", "count", seriesUpdated)
 	return nil
 }
 
@@ -362,22 +377,22 @@ func (s *Sonarr) CleanupAllTags(ctx context.Context, additionalTags []string) er
 		if tags.IsJellysweepOrAdditionalTag(name, additionalTags) {
 			resp, err := s.client.TagAPI.DeleteTag(s.sonarrAuthCtx(ctx), td.GetId()).Execute()
 			if err != nil {
-				log.Error("failed to delete Sonarr tag", "tag", name, "error", err)
+				s.logger().Error("failed to delete Sonarr tag", "tag", name, "error", err)
 				continue
 			}
 			defer resp.Body.Close() //nolint: errcheck
-			log.Info("Deleted sonarr tag", "name", name)
+			s.logger().Info("Deleted sonarr tag", "name", name)
 			deleted++
 		}
 	}
 
 	if deleted > 0 {
 		if err := s.tagsCache.Clear(ctx); err != nil {
-			log.Warn("failed to clear Sonarr tags cache", "error", err)
+			s.logger().Warn("failed to clear Sonarr tags cache", "error", err)
 		}
 	}
 
-	log.Info("deleted Sonarr tags", "count", deleted)
+	s.logger().Info("deleted Sonarr tags", "count", deleted)
 	return nil
 }
 
@@ -407,7 +422,7 @@ func (s *Sonarr) ResetAllTagsAndAddIgnore(ctx context.Context, id int32) error {
 	for _, tid := range series.GetTags() {
 		name := tagMap[tid]
 		if tags.IsJellysweepTag(name) {
-			log.Debug("Removing jellysweep tag from series: %s", "tag", name, "series", series.GetTitle())
+			s.logger().Debug("Removing jellysweep tag from series: %s", "tag", name, "series", series.GetTitle())
 			continue
 		}
 		newTags = append(newTags, tid)
@@ -426,7 +441,7 @@ func (s *Sonarr) ResetAllTagsAndAddIgnore(ctx context.Context, id int32) error {
 	}
 	defer resp.Body.Close() //nolint: errcheck
 
-	log.Info("Removed all jellysweep tags and added ignore tag to series", "series", series.GetTitle())
+	s.logger().Info("Removed all jellysweep tags and added ignore tag to series", "series", series.GetTitle())
 	return nil
 }
 
@@ -449,7 +464,7 @@ func (s *Sonarr) GetItemAddedDate(ctx context.Context, seriesID int32, since tim
 			SeriesIds([]int32{seriesID}).
 			Execute()
 		if err != nil {
-			log.Warn("failed to get Sonarr history for series", "seriesID", seriesID, "error", err)
+			s.logger().Warn("failed to get Sonarr history for series", "seriesID", seriesID, "error", err)
 			return nil, err
 		}
 		defer resp.Body.Close() //nolint: errcheck
@@ -490,7 +505,7 @@ func (s *Sonarr) GetItemAddedDate(ctx context.Context, seriesID int32, since tim
 	}
 
 	if earliestTime != nil {
-		log.Debug("Sonarr series first imported", "seriesID", seriesID, "importedAt", earliestTime.Format(time.RFC3339))
+		s.logger().Debug("Sonarr series first imported", "seriesID", seriesID, "importedAt", earliestTime.Format(time.RFC3339))
 	}
 
 	return earliestTime, nil
@@ -514,7 +529,7 @@ func (s *Sonarr) GetRootFolderUsage(ctx context.Context) (map[string]float64, er
 	roots := make([]string, 0, len(rootFolders))
 	for _, rf := range rootFolders {
 		if !rf.GetAccessible() {
-			log.Warn("Skipping inaccessible sonarr root folder", "path", rf.GetPath())
+			s.logger().Warn("Skipping inaccessible sonarr root folder", "path", rf.GetPath())
 			continue
 		}
 		roots = append(roots, rf.GetPath())
@@ -527,7 +542,7 @@ func (s *Sonarr) GetRootFolderUsage(ctx context.Context) (map[string]float64, er
 	usage := arr.RootFolderUsage(roots, mounts)
 	for _, root := range roots {
 		if _, ok := usage[root]; !ok {
-			log.Warn("No disk space information for sonarr root folder", "path", root)
+			s.logger().Warn("No disk space information for sonarr root folder", "path", root)
 		}
 	}
 	return usage, nil
