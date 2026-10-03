@@ -23,16 +23,11 @@ import (
 
 var _ arr.Arrer = (*Radarr)(nil)
 
-// Settings holds the global Jellysweep settings that apply to every Radarr instance.
-type Settings struct {
-	DryRun bool
-}
-
 type Radarr struct {
 	client    *radarrAPI.APIClient
 	name      string
 	apiKey    string
-	settings  Settings
+	settings  arr.Settings
 	tagsCache *cache.PrefixedCache[cache.TagMap]
 }
 
@@ -56,7 +51,7 @@ func (r *Radarr) logger() *log.Logger {
 }
 
 // NewRadarr creates a client for the Radarr instance identified by name.
-func NewRadarr(name string, instance *config.RadarrConfig, settings Settings, tagsCache *cache.PrefixedCache[cache.TagMap]) *Radarr {
+func NewRadarr(name string, instance *config.RadarrConfig, settings arr.Settings, tagsCache *cache.PrefixedCache[cache.TagMap]) *Radarr {
 	rcfg := radarrAPI.NewConfiguration()
 	rcfg.Servers = radarrAPI.ServerConfigurations{
 		{
@@ -71,7 +66,7 @@ func NewRadarr(name string, instance *config.RadarrConfig, settings Settings, ta
 		client:    client,
 		name:      name,
 		apiKey:    instance.APIKey,
-		settings:  settings,
+		settings:  settings.WithDefaults(),
 		tagsCache: tagsCache,
 	}
 }

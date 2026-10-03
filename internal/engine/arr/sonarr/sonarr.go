@@ -23,18 +23,11 @@ import (
 
 var _ arr.Arrer = (*Sonarr)(nil)
 
-// Settings holds the global Jellysweep settings that apply to every Sonarr instance.
-type Settings struct {
-	DryRun      bool
-	CleanupMode config.CleanupMode
-	KeepCount   int
-}
-
 type Sonarr struct {
 	client    *sonarrAPI.APIClient
 	name      string
 	apiKey    string
-	settings  Settings
+	settings  arr.Settings
 	tagsCache *cache.PrefixedCache[cache.TagMap]
 }
 
@@ -58,7 +51,7 @@ func (s *Sonarr) logger() *log.Logger {
 }
 
 // NewSonarr creates a client for the Sonarr instance identified by name.
-func NewSonarr(name string, instance *config.SonarrConfig, settings Settings, tagsCache *cache.PrefixedCache[cache.TagMap]) *Sonarr {
+func NewSonarr(name string, instance *config.SonarrConfig, settings arr.Settings, tagsCache *cache.PrefixedCache[cache.TagMap]) *Sonarr {
 	scfg := sonarrAPI.NewConfiguration()
 	scfg.Servers = sonarrAPI.ServerConfigurations{
 		{
@@ -73,7 +66,7 @@ func NewSonarr(name string, instance *config.SonarrConfig, settings Settings, ta
 		client:    client,
 		name:      name,
 		apiKey:    instance.APIKey,
-		settings:  settings,
+		settings:  settings.WithDefaults(),
 		tagsCache: tagsCache,
 	}
 }
@@ -422,7 +415,7 @@ func (s *Sonarr) ResetAllTagsAndAddIgnore(ctx context.Context, id int32) error {
 	for _, tid := range series.GetTags() {
 		name := tagMap[tid]
 		if tags.IsJellysweepTag(name) {
-			s.logger().Debug("Removing jellysweep tag from series: %s", "tag", name, "series", series.GetTitle())
+			s.logger().Debug("Removing jellysweep tag from series", "tag", name, "series", series.GetTitle())
 			continue
 		}
 		newTags = append(newTags, tid)

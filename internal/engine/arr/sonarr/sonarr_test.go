@@ -31,12 +31,7 @@ func newTestSonarr(t *testing.T, cfgOpts ...func(*config.Config)) (*Sonarr, *htt
 	}
 	engineCache, err := cache.NewEngineCache(&config.CacheConfig{Type: config.CacheTypeMemory})
 	require.NoError(t, err)
-	settings := Settings{
-		DryRun:      cfg.DryRun,
-		CleanupMode: cfg.GetCleanupMode(),
-		KeepCount:   cfg.GetKeepCount(),
-	}
-	return NewSonarr(config.DefaultArrInstanceName, cfg.Sonarr, settings, engineCache.SonarrTagsCache), server
+	return NewSonarr(config.DefaultArrInstanceName, cfg.Sonarr, arr.NewSettings(cfg), engineCache.SonarrTagsCache), server
 }
 
 func series(id int32, title string, year, tvdb, tmdb int32, tags ...int32) sonarrAPI.SeriesResource {
@@ -226,6 +221,34 @@ func TestDeleteMediaKeepSeasons(t *testing.T) {
 		deletedFiles = append(deletedFiles, r.Path)
 	}
 	require.Equal(t, []string{"/api/v3/episodefile/1003"}, deletedFiles, "only season 2 is removed; specials and season 1 stay")
+}
+
+func TestDeleteMediaKeepSeasonsUnsetKeepCountKeepsOneSeason(t *testing.T) {
+	server := httptestutil.New(t)
+	engineCache, err := cache.NewEngineCache(&config.CacheConfig{Type: config.CacheTypeMemory})
+	require.NoError(t, err)
+	// Settings built without NewSettings: the client must still apply the defaults.
+	settings := arr.Settings{CleanupMode: config.CleanupModeKeepSeasons}
+	s := NewSonarr(config.DefaultArrInstanceName, &config.SonarrConfig{URL: server.URL, APIKey: testAPIKey}, settings, engineCache.SonarrTagsCache)
+
+	aired := time.Now().Add(-30 * 24 * time.Hour)
+	server.JSON("GET /api/v3/episode", []sonarrAPI.EpisodeResource{
+		episode(101, 1, 1, 1001, true, aired),
+		episode(103, 2, 1, 1003, true, aired),
+	})
+	server.JSON("GET /api/v3/episodefile", []sonarrAPI.EpisodeFileResource{
+		episodeFile(1001), episodeFile(1003),
+	})
+	server.OK("DELETE /api/v3/episodefile/{id}")
+	server.OK("PUT /api/v3/episode/monitor")
+
+	require.NoError(t, s.DeleteMedia(t.Context(), 42, "Show"))
+
+	var deletedFiles []string
+	for _, r := range server.Requests(http.MethodDelete, "") {
+		deletedFiles = append(deletedFiles, r.Path)
+	}
+	require.Equal(t, []string{"/api/v3/episodefile/1003"}, deletedFiles, "an unset keep count must default to keeping one season")
 }
 
 func TestDeleteMediaKeepEpisodesNothingToDelete(t *testing.T) {
