@@ -24,8 +24,11 @@ import (
 var _ arr.Arrer = (*Radarr)(nil)
 
 type Radarr struct {
-	client    *radarrAPI.APIClient
-	name      string
+	client *radarrAPI.APIClient
+	// logger is tagged with the instance name. It is a copy of the default
+	// logger taken at construction, so later changes to the default logger's
+	// level or output do not reach it.
+	logger    *log.Logger
 	apiKey    string
 	settings  arr.Settings
 	tagsCache *cache.PrefixedCache[cache.TagMap]
@@ -44,12 +47,6 @@ func (r *Radarr) radarrAuthCtx(ctx context.Context) context.Context {
 	)
 }
 
-// logger returns the default logger tagged with the instance name. It is built
-// per call so later changes to the default logger's level or output apply.
-func (r *Radarr) logger() *log.Logger {
-	return log.With("instance", r.name)
-}
-
 // NewRadarr creates a client for the Radarr instance identified by name.
 func NewRadarr(name string, instance *config.RadarrConfig, settings arr.Settings, tagsCache *cache.PrefixedCache[cache.TagMap]) *Radarr {
 	rcfg := radarrAPI.NewConfiguration()
@@ -64,7 +61,7 @@ func NewRadarr(name string, instance *config.RadarrConfig, settings arr.Settings
 
 	return &Radarr{
 		client:    client,
-		name:      name,
+		logger:    log.With("instance", name),
 		apiKey:    instance.APIKey,
 		settings:  settings.WithDefaults(),
 		tagsCache: tagsCache,
@@ -101,7 +98,7 @@ func (r *Radarr) GetItems(ctx context.Context, jellyfinItems []arr.JellyfinItem)
 	for _, jf := range jellyfinItems {
 		libraryName := jf.ParentLibraryName
 		if libraryName == "" {
-			r.logger().Error("Library name is empty for Jellyfin item, skipping", "item_id", jf.GetId(), "item_name", jf.GetName())
+			r.logger.Error("Library name is empty for Jellyfin item, skipping", "item_id", jf.GetId(), "item_name", jf.GetName())
 			continue
 		}
 
@@ -117,12 +114,12 @@ func (r *Radarr) GetItems(ctx context.Context, jellyfinItems []arr.JellyfinItem)
 			if tmdbIdStr, ok := providerIds["Tmdb"]; ok && tmdbIdStr != "" {
 				tmdbId, err := strconv.ParseInt(tmdbIdStr, 10, 32)
 				if err != nil {
-					r.logger().Warn("Failed to parse TMDB ID from Jellyfin provider IDs", "tmdbId", tmdbIdStr, "error", err)
+					r.logger.Warn("Failed to parse TMDB ID from Jellyfin provider IDs", "tmdbId", tmdbIdStr, "error", err)
 				} else {
 					if movie, found := byTmdbId[int32(tmdbId)]; found {
 						mr = movie
 						matched = true
-						r.logger().Debug("Matched Radarr movie by TMDB ID", "title", jf.GetName(), "tmdbId", tmdbId)
+						r.logger.Debug("Matched Radarr movie by TMDB ID", "title", jf.GetName(), "tmdbId", tmdbId)
 					}
 				}
 			}
@@ -134,12 +131,12 @@ func (r *Radarr) GetItems(ctx context.Context, jellyfinItems []arr.JellyfinItem)
 			if movie, ok := byTitleYear[key]; ok {
 				mr = movie
 				matched = true
-				r.logger().Debug("Matched Radarr movie by title+year", "title", jf.GetName(), "year", jf.GetProductionYear())
+				r.logger.Debug("Matched Radarr movie by title+year", "title", jf.GetName(), "year", jf.GetProductionYear())
 			}
 		}
 
 		if !matched {
-			r.logger().Warn("No matching Radarr movie found for Jellyfin item, skipping", "title", jf.GetName(), "year", jf.GetProductionYear())
+			r.logger.Warn("No matching Radarr movie found for Jellyfin item, skipping", "title", jf.GetName(), "year", jf.GetProductionYear())
 			continue
 		}
 
@@ -155,7 +152,7 @@ func (r *Radarr) GetItems(ctx context.Context, jellyfinItems []arr.JellyfinItem)
 		})
 	}
 
-	r.logger().Info("Merged jellyfin items with radarr movies", "mediaCount", len(mediaItems), "jellyfinCount", len(jellyfinItems))
+	r.logger.Info("Merged jellyfin items with radarr movies", "mediaCount", len(mediaItems), "jellyfinCount", len(jellyfinItems))
 	return mediaItems, nil
 }
 
@@ -173,7 +170,7 @@ func (r *Radarr) getTags(ctx context.Context, forceRefresh bool) (cache.TagMap, 
 		cachedTags, err := r.tagsCache.Get(ctx, "all")
 		switch {
 		case err != nil:
-			r.logger().Debug("Failed to get Radarr tags from cache, fetching from API", "error", err)
+			r.logger.Debug("Failed to get Radarr tags from cache, fetching from API", "error", err)
 		case len(cachedTags) != 0:
 			return cachedTags, nil
 		}
@@ -184,7 +181,7 @@ func (r *Radarr) getTags(ctx context.Context, forceRefresh bool) (cache.TagMap, 
 		// A refresh was requested because the cached tags may be outdated; drop
 		// them so later cached reads do not keep serving stale labels.
 		if cerr := r.tagsCache.Clear(ctx); cerr != nil {
-			r.logger().Debug("Failed to clear Radarr tags cache", "error", cerr)
+			r.logger.Debug("Failed to clear Radarr tags cache", "error", cerr)
 		}
 		return nil, err
 	}
@@ -195,7 +192,7 @@ func (r *Radarr) getTags(ctx context.Context, forceRefresh bool) (cache.TagMap, 
 		tagMap[t.GetId()] = t.GetLabel()
 	}
 	if err := r.tagsCache.Set(ctx, "all", tagMap); err != nil {
-		r.logger().Warn("failed to cache Radarr tags", "error", err)
+		r.logger.Warn("failed to cache Radarr tags", "error", err)
 	}
 
 	return tagMap, nil
@@ -237,18 +234,18 @@ func (r *Radarr) ensureTagExists(ctx context.Context, label string) error {
 	}
 	defer resp.Body.Close() //nolint: errcheck
 
-	r.logger().Info("created Radarr tag", "label", label)
+	r.logger.Info("created Radarr tag", "label", label)
 
 	tagMap[newTag.GetId()] = newTag.GetLabel()
 	if err := r.tagsCache.Set(ctx, "all", tagMap); err != nil {
-		r.logger().Warn("failed to cache new Radarr tag", "label", label, "error", err)
+		r.logger.Warn("failed to cache new Radarr tag", "label", label, "error", err)
 	}
 	return nil
 }
 
 func (r *Radarr) DeleteMedia(ctx context.Context, movieID int32, title string) error {
 	if r.settings.DryRun {
-		r.logger().Info("dry run: would delete Radarr movie", "title", title)
+		r.logger.Info("dry run: would delete Radarr movie", "title", title)
 		return nil
 	}
 
@@ -260,14 +257,14 @@ func (r *Radarr) DeleteMedia(ctx context.Context, movieID int32, title string) e
 	}
 	defer resp.Body.Close() //nolint: errcheck
 
-	r.logger().Info("deleted Radarr movie", "title", title)
+	r.logger.Info("deleted Radarr movie", "title", title)
 	return nil
 }
 
 // UnmonitorMedia unmonitors a Radarr movie to prevent it from being re-downloaded.
 func (r *Radarr) UnmonitorMedia(ctx context.Context, movieID int32, title string) error {
 	if r.settings.DryRun {
-		r.logger().Info("dry run: would unmonitor Radarr movie", "title", title)
+		r.logger.Info("dry run: would unmonitor Radarr movie", "title", title)
 		return nil
 	}
 
@@ -283,7 +280,7 @@ func (r *Radarr) UnmonitorMedia(ctx context.Context, movieID int32, title string
 	}
 	defer resp.Body.Close() //nolint: errcheck
 
-	r.logger().Info("unmonitored Radarr movie to prevent redownload", "title", title)
+	r.logger.Info("unmonitored Radarr movie to prevent redownload", "title", title)
 	return nil
 }
 
@@ -307,7 +304,7 @@ func (r *Radarr) ResetTags(ctx context.Context, additionalTags []string) error {
 			name := tagMap[id]
 			if tags.IsJellysweepOrAdditionalTag(name, additionalTags) {
 				hasJellysweepTags = true
-				r.logger().Debug("removing jellysweep tag from Radarr movie", "tag", name, "title", m.GetTitle())
+				r.logger.Debug("removing jellysweep tag from Radarr movie", "tag", name, "title", m.GetTitle())
 			} else {
 				newTags = append(newTags, id)
 			}
@@ -319,16 +316,16 @@ func (r *Radarr) ResetTags(ctx context.Context, additionalTags []string) error {
 				MovieResource(m).
 				Execute()
 			if err != nil {
-				r.logger().Error("failed to update Radarr movie", "title", m.GetTitle(), "error", err)
+				r.logger.Error("failed to update Radarr movie", "title", m.GetTitle(), "error", err)
 				continue
 			}
 			defer resp.Body.Close() //nolint: errcheck
-			r.logger().Info("removed jellysweep tags from Radarr movie", "title", m.GetTitle())
+			r.logger.Info("removed jellysweep tags from Radarr movie", "title", m.GetTitle())
 			updated++
 		}
 	}
 
-	r.logger().Info("updated Radarr movies", "count", updated)
+	r.logger.Info("updated Radarr movies", "count", updated)
 	return nil
 }
 
@@ -345,22 +342,22 @@ func (r *Radarr) CleanupAllTags(ctx context.Context, additionalTags []string) er
 		if tags.IsJellysweepOrAdditionalTag(name, additionalTags) {
 			resp, err := r.client.TagAPI.DeleteTag(r.radarrAuthCtx(ctx), t.GetId()).Execute()
 			if err != nil {
-				r.logger().Error("failed to delete Radarr tag", "tag", name, "error", err)
+				r.logger.Error("failed to delete Radarr tag", "tag", name, "error", err)
 				continue
 			}
 			defer resp.Body.Close() //nolint: errcheck
-			r.logger().Info("deleted Radarr tag", "tag", name)
+			r.logger.Info("deleted Radarr tag", "tag", name)
 			deleted++
 		}
 	}
 
 	if deleted > 0 {
 		if err := r.tagsCache.Clear(ctx); err != nil {
-			r.logger().Warn("failed to clear Radarr tags cache", "error", err)
+			r.logger.Warn("failed to clear Radarr tags cache", "error", err)
 		}
 	}
 
-	r.logger().Info("deleted Radarr tags", "count", deleted)
+	r.logger.Info("deleted Radarr tags", "count", deleted)
 	return nil
 }
 
@@ -389,7 +386,7 @@ func (r *Radarr) ResetAllTagsAndAddIgnore(ctx context.Context, id int32) error {
 	for _, tid := range movie.GetTags() {
 		name := tagMap[tid]
 		if tags.IsJellysweepTag(name) {
-			r.logger().Debug("removing jellysweep tag from Radarr movie", "tag", name, "title", movie.GetTitle())
+			r.logger.Debug("removing jellysweep tag from Radarr movie", "tag", name, "title", movie.GetTitle())
 		} else {
 			newTags = append(newTags, tid)
 		}
@@ -408,7 +405,7 @@ func (r *Radarr) ResetAllTagsAndAddIgnore(ctx context.Context, id int32) error {
 	}
 	defer resp.Body.Close() //nolint: errcheck
 
-	r.logger().Info("removed all jellysweep tags and added ignore tag to Radarr movie", "title", movie.GetTitle())
+	r.logger.Info("removed all jellysweep tags and added ignore tag to Radarr movie", "title", movie.GetTitle())
 	return nil
 }
 
@@ -431,7 +428,7 @@ func (r *Radarr) GetItemAddedDate(ctx context.Context, movieID int32, since time
 			MovieIds([]int32{movieID}).
 			Execute()
 		if err != nil {
-			r.logger().Warn("failed to get Radarr history for movie", "movieID", movieID, "error", err)
+			r.logger.Warn("failed to get Radarr history for movie", "movieID", movieID, "error", err)
 			return nil, err
 		}
 		_ = resp.Body.Close()
@@ -472,7 +469,7 @@ func (r *Radarr) GetItemAddedDate(ctx context.Context, movieID int32, since time
 	}
 
 	if earliestTime != nil {
-		r.logger().Debug("Radarr movie first imported", "movieID", movieID, "importedAt", earliestTime.Format(time.RFC3339))
+		r.logger.Debug("Radarr movie first imported", "movieID", movieID, "importedAt", earliestTime.Format(time.RFC3339))
 	}
 
 	return earliestTime, nil
@@ -496,7 +493,7 @@ func (r *Radarr) GetRootFolderUsage(ctx context.Context) (map[string]float64, er
 	roots := make([]string, 0, len(rootFolders))
 	for _, rf := range rootFolders {
 		if !rf.GetAccessible() {
-			r.logger().Warn("Skipping inaccessible radarr root folder", "path", rf.GetPath())
+			r.logger.Warn("Skipping inaccessible radarr root folder", "path", rf.GetPath())
 			continue
 		}
 		roots = append(roots, rf.GetPath())
@@ -509,7 +506,7 @@ func (r *Radarr) GetRootFolderUsage(ctx context.Context) (map[string]float64, er
 	usage := arr.RootFolderUsage(roots, mounts)
 	for _, root := range roots {
 		if _, ok := usage[root]; !ok {
-			r.logger().Warn("No disk space information for radarr root folder", "path", root)
+			r.logger.Warn("No disk space information for radarr root folder", "path", root)
 		}
 	}
 	return usage, nil
