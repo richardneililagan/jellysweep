@@ -58,7 +58,7 @@ func NewRadarr(name string, instance *config.RadarrConfig, cfg *config.Config, t
 
 	return &Radarr{
 		client:    client,
-		logger:    log.With("instance", name),
+		logger:    log.With("arr", "radarr", "instance", name),
 		apiKey:    instance.APIKey,
 		cfg:       cfg,
 		tagsCache: tagsCache,

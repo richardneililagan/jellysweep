@@ -342,3 +342,23 @@ func TestGetRootFolderUsageAPIError(t *testing.T) {
 	_, err := r.GetRootFolderUsage(t.Context())
 	require.Error(t, err)
 }
+
+func TestNewRadarrUsesInstanceConfig(t *testing.T) {
+	server := httptestutil.New(t)
+	server.OK("DELETE /api/v3/movie/{id}")
+	// The top-level block deliberately differs from the instance: the client
+	// must take its URL and API key from the instance config only.
+	cfg := &config.Config{
+		Radarr: &config.RadarrConfig{URL: "http://127.0.0.1:1", APIKey: "top-level-key"},
+	}
+	instance := &config.RadarrConfig{URL: server.URL, APIKey: "instance-key"}
+	engineCache, err := cache.NewEngineCache(&config.CacheConfig{Type: config.CacheTypeMemory})
+	require.NoError(t, err)
+	r := NewRadarr("other", instance, cfg, engineCache.RadarrTagsCache)
+
+	require.NoError(t, r.DeleteMedia(t.Context(), 42, "Movie"))
+
+	requests := server.Requests(http.MethodDelete, "/api/v3/movie/42")
+	require.Len(t, requests, 1)
+	require.Equal(t, "instance-key", requests[0].Header.Get("X-Api-Key"))
+}

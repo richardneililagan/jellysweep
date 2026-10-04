@@ -58,7 +58,7 @@ func NewSonarr(name string, instance *config.SonarrConfig, cfg *config.Config, t
 
 	return &Sonarr{
 		client:    client,
-		logger:    log.With("instance", name),
+		logger:    log.With("arr", "sonarr", "instance", name),
 		apiKey:    instance.APIKey,
 		cfg:       cfg,
 		tagsCache: tagsCache,

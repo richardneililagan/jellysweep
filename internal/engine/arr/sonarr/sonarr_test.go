@@ -546,3 +546,23 @@ func TestGetRootFolderUsageAPIError(t *testing.T) {
 	_, err := s.GetRootFolderUsage(t.Context())
 	require.Error(t, err)
 }
+
+func TestNewSonarrUsesInstanceConfig(t *testing.T) {
+	server := httptestutil.New(t)
+	server.OK("DELETE /api/v3/series/{id}")
+	// The top-level block deliberately differs from the instance: the client
+	// must take its URL and API key from the instance config only.
+	cfg := &config.Config{
+		Sonarr: &config.SonarrConfig{URL: "http://127.0.0.1:1", APIKey: "top-level-key"},
+	}
+	instance := &config.SonarrConfig{URL: server.URL, APIKey: "instance-key"}
+	engineCache, err := cache.NewEngineCache(&config.CacheConfig{Type: config.CacheTypeMemory})
+	require.NoError(t, err)
+	s := NewSonarr("other", instance, cfg, engineCache.SonarrTagsCache)
+
+	require.NoError(t, s.DeleteMedia(t.Context(), 42, "Show"))
+
+	requests := server.Requests(http.MethodDelete, "/api/v3/series/42")
+	require.Len(t, requests, 1)
+	require.Equal(t, "instance-key", requests[0].Header.Get("X-Api-Key"))
+}
