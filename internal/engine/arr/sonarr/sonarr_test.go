@@ -31,7 +31,7 @@ func newTestSonarr(t *testing.T, cfgOpts ...func(*config.Config)) (*Sonarr, *htt
 	}
 	engineCache, err := cache.NewEngineCache(&config.CacheConfig{Type: config.CacheTypeMemory})
 	require.NoError(t, err)
-	return NewSonarr(cfg, nil, engineCache.SonarrTagsCache), server
+	return NewSonarr(config.DefaultArrInstanceName, cfg.Sonarr, cfg, engineCache.SonarrTagsCache), server
 }
 
 func series(id int32, title string, year, tvdb, tmdb int32, tags ...int32) sonarrAPI.SeriesResource {
@@ -221,6 +221,31 @@ func TestDeleteMediaKeepSeasons(t *testing.T) {
 		deletedFiles = append(deletedFiles, r.Path)
 	}
 	require.Equal(t, []string{"/api/v3/episodefile/1003"}, deletedFiles, "only season 2 is removed; specials and season 1 stay")
+}
+
+func TestDeleteMediaKeepSeasonsUnsetKeepCountKeepsOneSeason(t *testing.T) {
+	s, server := newTestSonarr(t, func(c *config.Config) {
+		c.CleanupMode = config.CleanupModeKeepSeasons
+	})
+
+	aired := time.Now().Add(-30 * 24 * time.Hour)
+	server.JSON("GET /api/v3/episode", []sonarrAPI.EpisodeResource{
+		episode(101, 1, 1, 1001, true, aired),
+		episode(103, 2, 1, 1003, true, aired),
+	})
+	server.JSON("GET /api/v3/episodefile", []sonarrAPI.EpisodeFileResource{
+		episodeFile(1001), episodeFile(1003),
+	})
+	server.OK("DELETE /api/v3/episodefile/{id}")
+	server.OK("PUT /api/v3/episode/monitor")
+
+	require.NoError(t, s.DeleteMedia(t.Context(), 42, "Show"))
+
+	var deletedFiles []string
+	for _, r := range server.Requests(http.MethodDelete, "") {
+		deletedFiles = append(deletedFiles, r.Path)
+	}
+	require.Equal(t, []string{"/api/v3/episodefile/1003"}, deletedFiles, "an unset keep count must default to keeping one season")
 }
 
 func TestDeleteMediaKeepEpisodesNothingToDelete(t *testing.T) {
@@ -520,4 +545,24 @@ func TestGetRootFolderUsageAPIError(t *testing.T) {
 	})
 	_, err := s.GetRootFolderUsage(t.Context())
 	require.Error(t, err)
+}
+
+func TestNewSonarrUsesInstanceConfig(t *testing.T) {
+	server := httptestutil.New(t)
+	server.OK("DELETE /api/v3/series/{id}")
+	// The top-level block deliberately differs from the instance: the client
+	// must take its URL and API key from the instance config only.
+	cfg := &config.Config{
+		Sonarr: &config.SonarrConfig{URL: "http://127.0.0.1:1", APIKey: "top-level-key"},
+	}
+	instance := &config.SonarrConfig{URL: server.URL, APIKey: "instance-key"}
+	engineCache, err := cache.NewEngineCache(&config.CacheConfig{Type: config.CacheTypeMemory})
+	require.NoError(t, err)
+	s := NewSonarr("other", instance, cfg, engineCache.SonarrTagsCache)
+
+	require.NoError(t, s.DeleteMedia(t.Context(), 42, "Show"))
+
+	requests := server.Requests(http.MethodDelete, "/api/v3/series/42")
+	require.Len(t, requests, 1)
+	require.Equal(t, "instance-key", requests[0].Header.Get("X-Api-Key"))
 }

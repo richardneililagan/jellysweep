@@ -321,6 +321,10 @@ type SonarrConfig struct {
 	Unmonitor bool `yaml:"unmonitor" mapstructure:"unmonitor"`
 }
 
+// DefaultArrInstanceName is the name of the Sonarr or Radarr instance
+// configured through the single top-level sonarr or radarr block.
+const DefaultArrInstanceName = "default"
+
 // RadarrConfig holds the configuration for the Radarr server.
 type RadarrConfig struct {
 	// URL is the base URL of the Radarr server.

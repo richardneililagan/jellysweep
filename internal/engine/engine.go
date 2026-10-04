@@ -126,14 +126,14 @@ func New(cfg *config.Config, db database.DB, initialDBMigration bool) (*Engine, 
 
 	var sonarrClient arr.Arrer
 	if cfg.Sonarr != nil {
-		sonarrClient = sonarrImpl.NewSonarr(cfg, statsClient, engineCache.SonarrTagsCache)
+		sonarrClient = sonarrImpl.NewSonarr(config.DefaultArrInstanceName, cfg.Sonarr, cfg, engineCache.SonarrTagsCache)
 	} else {
 		log.Warn("Sonarr configuration is missing, some features will be disabled")
 	}
 
 	var radarrClient arr.Arrer
 	if cfg.Radarr != nil {
-		radarrClient = radarrImpl.NewRadarr(cfg, statsClient, engineCache.RadarrTagsCache)
+		radarrClient = radarrImpl.NewRadarr(config.DefaultArrInstanceName, cfg.Radarr, cfg, engineCache.RadarrTagsCache)
 	} else {
 		log.Warn("Radarr configuration is missing, some features will be disabled")
 	}
