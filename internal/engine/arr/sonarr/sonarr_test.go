@@ -31,7 +31,7 @@ func newTestSonarr(t *testing.T, cfgOpts ...func(*config.Config)) (*Sonarr, *htt
 	}
 	engineCache, err := cache.NewEngineCache(&config.CacheConfig{Type: config.CacheTypeMemory})
 	require.NoError(t, err)
-	return NewSonarr(config.DefaultArrInstanceName, cfg.Sonarr, arr.NewSettings(cfg), engineCache.SonarrTagsCache), server
+	return NewSonarr(config.DefaultArrInstanceName, cfg.Sonarr, cfg, engineCache.SonarrTagsCache), server
 }
 
 func series(id int32, title string, year, tvdb, tmdb int32, tags ...int32) sonarrAPI.SeriesResource {
@@ -224,12 +224,9 @@ func TestDeleteMediaKeepSeasons(t *testing.T) {
 }
 
 func TestDeleteMediaKeepSeasonsUnsetKeepCountKeepsOneSeason(t *testing.T) {
-	server := httptestutil.New(t)
-	engineCache, err := cache.NewEngineCache(&config.CacheConfig{Type: config.CacheTypeMemory})
-	require.NoError(t, err)
-	// Settings built without NewSettings: the client must still apply the defaults.
-	settings := arr.Settings{CleanupMode: config.CleanupModeKeepSeasons}
-	s := NewSonarr(config.DefaultArrInstanceName, &config.SonarrConfig{URL: server.URL, APIKey: testAPIKey}, settings, engineCache.SonarrTagsCache)
+	s, server := newTestSonarr(t, func(c *config.Config) {
+		c.CleanupMode = config.CleanupModeKeepSeasons
+	})
 
 	aired := time.Now().Add(-30 * 24 * time.Hour)
 	server.JSON("GET /api/v3/episode", []sonarrAPI.EpisodeResource{

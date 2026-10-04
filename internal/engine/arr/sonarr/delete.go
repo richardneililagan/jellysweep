@@ -12,10 +12,10 @@ import (
 
 func (s *Sonarr) DeleteMedia(ctx context.Context, seriesID int32, title string) error {
 	// Get the global cleanup configuration
-	cleanupMode := s.settings.CleanupMode
-	keepCount := s.settings.KeepCount
+	cleanupMode := s.cfg.GetCleanupMode()
+	keepCount := s.cfg.GetKeepCount()
 
-	if s.settings.DryRun {
+	if s.cfg.DryRun {
 		s.logger.Info("dry run: would delete Sonarr series", "title", title, "cleanupMode", cleanupMode)
 		return nil
 	}

@@ -27,7 +27,7 @@ type Radarr struct {
 	client    *radarrAPI.APIClient
 	logger    *log.Logger
 	apiKey    string
-	settings  arr.Settings
+	cfg       *config.Config
 	tagsCache *cache.PrefixedCache[cache.TagMap]
 }
 
@@ -45,7 +45,7 @@ func (r *Radarr) radarrAuthCtx(ctx context.Context) context.Context {
 }
 
 // NewRadarr creates a client for the Radarr instance identified by name.
-func NewRadarr(name string, instance *config.RadarrConfig, settings arr.Settings, tagsCache *cache.PrefixedCache[cache.TagMap]) *Radarr {
+func NewRadarr(name string, instance *config.RadarrConfig, cfg *config.Config, tagsCache *cache.PrefixedCache[cache.TagMap]) *Radarr {
 	rcfg := radarrAPI.NewConfiguration()
 	rcfg.Servers = radarrAPI.ServerConfigurations{
 		{
@@ -60,7 +60,7 @@ func NewRadarr(name string, instance *config.RadarrConfig, settings arr.Settings
 		client:    client,
 		logger:    log.With("instance", name),
 		apiKey:    instance.APIKey,
-		settings:  settings.WithDefaults(),
+		cfg:       cfg,
 		tagsCache: tagsCache,
 	}
 }
@@ -241,7 +241,7 @@ func (r *Radarr) ensureTagExists(ctx context.Context, label string) error {
 }
 
 func (r *Radarr) DeleteMedia(ctx context.Context, movieID int32, title string) error {
-	if r.settings.DryRun {
+	if r.cfg.DryRun {
 		r.logger.Info("dry run: would delete Radarr movie", "title", title)
 		return nil
 	}
@@ -260,7 +260,7 @@ func (r *Radarr) DeleteMedia(ctx context.Context, movieID int32, title string) e
 
 // UnmonitorMedia unmonitors a Radarr movie to prevent it from being re-downloaded.
 func (r *Radarr) UnmonitorMedia(ctx context.Context, movieID int32, title string) error {
-	if r.settings.DryRun {
+	if r.cfg.DryRun {
 		r.logger.Info("dry run: would unmonitor Radarr movie", "title", title)
 		return nil
 	}

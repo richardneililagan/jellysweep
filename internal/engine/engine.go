@@ -124,18 +124,16 @@ func New(cfg *config.Config, db database.DB, initialDBMigration bool) (*Engine, 
 	// Create Jellyfin client
 	jellyfinAPIClient := jellyfin.New(cfg)
 
-	arrSettings := arr.NewSettings(cfg)
-
 	var sonarrClient arr.Arrer
 	if cfg.Sonarr != nil {
-		sonarrClient = sonarrImpl.NewSonarr(config.DefaultArrInstanceName, cfg.Sonarr, arrSettings, engineCache.SonarrTagsCache)
+		sonarrClient = sonarrImpl.NewSonarr(config.DefaultArrInstanceName, cfg.Sonarr, cfg, engineCache.SonarrTagsCache)
 	} else {
 		log.Warn("Sonarr configuration is missing, some features will be disabled")
 	}
 
 	var radarrClient arr.Arrer
 	if cfg.Radarr != nil {
-		radarrClient = radarrImpl.NewRadarr(config.DefaultArrInstanceName, cfg.Radarr, arrSettings, engineCache.RadarrTagsCache)
+		radarrClient = radarrImpl.NewRadarr(config.DefaultArrInstanceName, cfg.Radarr, cfg, engineCache.RadarrTagsCache)
 	} else {
 		log.Warn("Radarr configuration is missing, some features will be disabled")
 	}

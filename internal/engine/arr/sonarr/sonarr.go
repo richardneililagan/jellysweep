@@ -27,7 +27,7 @@ type Sonarr struct {
 	client    *sonarrAPI.APIClient
 	logger    *log.Logger
 	apiKey    string
-	settings  arr.Settings
+	cfg       *config.Config
 	tagsCache *cache.PrefixedCache[cache.TagMap]
 }
 
@@ -45,7 +45,7 @@ func (s *Sonarr) sonarrAuthCtx(ctx context.Context) context.Context {
 }
 
 // NewSonarr creates a client for the Sonarr instance identified by name.
-func NewSonarr(name string, instance *config.SonarrConfig, settings arr.Settings, tagsCache *cache.PrefixedCache[cache.TagMap]) *Sonarr {
+func NewSonarr(name string, instance *config.SonarrConfig, cfg *config.Config, tagsCache *cache.PrefixedCache[cache.TagMap]) *Sonarr {
 	scfg := sonarrAPI.NewConfiguration()
 	scfg.Servers = sonarrAPI.ServerConfigurations{
 		{
@@ -60,7 +60,7 @@ func NewSonarr(name string, instance *config.SonarrConfig, settings arr.Settings
 		client:    client,
 		logger:    log.With("instance", name),
 		apiKey:    instance.APIKey,
-		settings:  settings.WithDefaults(),
+		cfg:       cfg,
 		tagsCache: tagsCache,
 	}
 }
@@ -269,7 +269,7 @@ func (s *Sonarr) UnmonitorMedia(ctx context.Context, seriesID int32, title strin
 		return fmt.Errorf("failed to get episodes for series %s: %w", title, err)
 	}
 
-	if s.settings.DryRun {
+	if s.cfg.DryRun {
 		s.logger.Info("dry run: would unmonitor episodes for series", "title", title, "count", len(episodes))
 		return nil
 	}

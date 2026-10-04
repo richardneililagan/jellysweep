@@ -31,7 +31,7 @@ func newTestRadarr(t *testing.T, cfgOpts ...func(*config.Config)) (*Radarr, *htt
 	}
 	engineCache, err := cache.NewEngineCache(&config.CacheConfig{Type: config.CacheTypeMemory})
 	require.NoError(t, err)
-	return NewRadarr(config.DefaultArrInstanceName, cfg.Radarr, arr.NewSettings(cfg), engineCache.RadarrTagsCache), server
+	return NewRadarr(config.DefaultArrInstanceName, cfg.Radarr, cfg, engineCache.RadarrTagsCache), server
 }
 
 func movie(id int32, title string, year, tmdb int32, tags ...int32) radarrAPI.MovieResource {
