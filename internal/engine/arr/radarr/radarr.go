@@ -24,10 +24,7 @@ import (
 var _ arr.Arrer = (*Radarr)(nil)
 
 type Radarr struct {
-	client *radarrAPI.APIClient
-	// logger is tagged with the instance name. It is a copy of the default
-	// logger taken at construction, so later changes to the default logger's
-	// level or output do not reach it.
+	client    *radarrAPI.APIClient
 	logger    *log.Logger
 	apiKey    string
 	settings  arr.Settings
